@@ -25,18 +25,18 @@ import org.sunbird.common.models.util.PropertiesCache;
  *
  * @author Manzarul
  */
-public final class SchedulerManager {
+public class SchedulerManager {
 
   private static final String FILE = "quartz.properties";
-  private static Scheduler scheduler = null;
+  public static Scheduler scheduler = null;
   private static SchedulerManager schedulerManager = null;
 
-  private SchedulerManager() {
+  public SchedulerManager() {
     schedule();
   }
 
   /** This method will register the quartz scheduler job. */
-  private void schedule() {
+  public void schedule() {
     ProjectLogger.log(
         "SchedulerManager:schedule: Call to start scheduler jobs - org.sunbird.common.quartz.scheduler.SchedulerManager",
         LoggerEnum.INFO.name());
@@ -52,17 +52,29 @@ public final class SchedulerManager {
         configProp = setUpClusterMode();
       }
       if (!isEmbedded && configProp != null) {
+
+        StdSchedulerFactory schedulerFactory = new StdSchedulerFactory(configProp);
         ProjectLogger.log("Quartz scheduler is running in cluster mode.", LoggerEnum.INFO.name());
-        scheduler = new StdSchedulerFactory(configProp).getScheduler();
+        scheduler = schedulerFactory.getScheduler("MyScheduler");
+
+        if (null == scheduler) {
+          Thread.sleep(5000);
+          scheduler = schedulerFactory.getScheduler();
+        }
+
+        String schedulerName = scheduler.getSchedulerName();
+        ProjectLogger.log("Quartz scheduler is running in cluster mode. scheduler Name is: "+schedulerName, LoggerEnum.INFO.name());
       } else {
         ProjectLogger.log("Quartz scheduler is running in embedded mode.", LoggerEnum.INFO.name());
         scheduler = new StdSchedulerFactory().getScheduler();
       }
       String identifier = "NetOps-PC1502295457753";
-      scheduleBulkUploadJob(identifier);
-      scheduleUpdateUserCountJob(identifier);
-      scheduleChannelReg(identifier);
-      scheduleShadowUser(identifier);
+
+       scheduleBulkUploadJob(identifier);
+       scheduleUpdateUserCountJob(identifier);
+       scheduleChannelReg(identifier);
+       scheduleShadowUser(identifier);
+
     } catch (Exception e) {
       ProjectLogger.log(
           "SchedulerManager:schedule: Error in starting scheduler jobs - org.sunbird.common.quartz.scheduler.SchedulerManager "
@@ -202,6 +214,7 @@ public final class SchedulerManager {
           "org.quartz.dataSource.MySqlDS.URL", "jdbc:postgresql://" + host + ":" + port + "/" + db);
       configProp.put("org.quartz.dataSource.MySqlDS.user", username);
       configProp.put("org.quartz.dataSource.MySqlDS.password", password);
+      configProp.put("org.quartz.scheduler.instanceName" , "MyScheduler");
       ProjectLogger.log(
           "SchedulerManager:setUpClusterMode: Connection is established from environment variable",
           LoggerEnum.INFO);

@@ -1,10 +1,7 @@
 package org.sunbird.learner.actors.otp.dao.impl;
 
 import java.sql.Timestamp;
-import java.util.Calendar;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import org.apache.commons.collections.CollectionUtils;
 import org.sunbird.cassandra.CassandraOperation;
 import org.sunbird.common.models.response.Response;
@@ -39,7 +36,17 @@ public class OTPDaoImpl implements OTPDao {
     Map<String, Object> request = new HashMap<>();
     request.put(JsonKey.TYPE, type);
     request.put(JsonKey.KEY, key);
-    Response result = cassandraOperation.getRecordById(Util.KEY_SPACE_NAME, TABLE_NAME, request);
+    List<String> fields = new ArrayList<>();
+    fields.add(JsonKey.TYPE);
+    fields.add(JsonKey.KEY);
+    fields.add(JsonKey.ATTEMPTED_COUNT);
+    fields.add(JsonKey.CREATED_ON);
+    fields.add(JsonKey.OTP);
+    List<String> ttlFields = new ArrayList<>();
+    ttlFields.add(JsonKey.OTP);
+    Response result =
+        cassandraOperation.getRecordWithTTLById(
+            Util.KEY_SPACE_NAME, TABLE_NAME, request, ttlFields, fields);
     List<Map<String, Object>> otpMapList = (List<Map<String, Object>>) result.get(JsonKey.RESPONSE);
     if (CollectionUtils.isEmpty(otpMapList)) {
       return null;
@@ -53,6 +60,7 @@ public class OTPDaoImpl implements OTPDao {
     request.put(JsonKey.TYPE, type);
     request.put(JsonKey.KEY, key);
     request.put(JsonKey.OTP, otp);
+    request.put(JsonKey.ATTEMPTED_COUNT, 0);
     request.put(JsonKey.CREATED_ON, new Timestamp(Calendar.getInstance().getTimeInMillis()));
     String expirationInSeconds =
         PropertiesCache.getInstance().getProperty(JsonKey.SUNBIRD_OTP_EXPIRATION);
@@ -62,11 +70,25 @@ public class OTPDaoImpl implements OTPDao {
 
   @Override
   public void deleteOtp(String type, String key) {
-    Map<String,String>compositeKeyMap=new HashMap<>();
-    compositeKeyMap.put(JsonKey.TYPE,type);
-    compositeKeyMap.put(JsonKey.KEY,key);
-    cassandraOperation.deleteRecord(JsonKey.SUNBIRD,TABLE_NAME,compositeKeyMap);
+    Map<String, String> compositeKeyMap = new HashMap<>();
+    compositeKeyMap.put(JsonKey.TYPE, type);
+    compositeKeyMap.put(JsonKey.KEY, key);
+    cassandraOperation.deleteRecord(JsonKey.SUNBIRD, TABLE_NAME, compositeKeyMap);
     ProjectLogger.log("OTPDaoImpl:deleteOtp:otp deleted", LoggerEnum.INFO.name());
   }
 
+  @Override
+  public void updateAttemptCount(Map<String, Object> otpDetails) {
+    Map<String, Object> request = new HashMap<>();
+    int ttl = (int) otpDetails.get("otp_ttl");
+    otpDetails.remove("otp_ttl");
+    request.putAll(otpDetails);
+    request.remove(JsonKey.KEY);
+    request.remove(JsonKey.TYPE);
+    Map<String, Object> compositeKey = new HashMap<>();
+    compositeKey.put(JsonKey.TYPE, otpDetails.get(JsonKey.TYPE));
+    compositeKey.put(JsonKey.KEY, otpDetails.get(JsonKey.KEY));
+    cassandraOperation.updateRecordWithTTL(
+        Util.KEY_SPACE_NAME, TABLE_NAME, request, compositeKey, ttl);
+  }
 }

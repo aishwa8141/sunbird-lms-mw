@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -25,6 +24,7 @@ import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
 import org.sunbird.cassandraimpl.CassandraOperationImpl;
 import org.sunbird.common.exception.ProjectCommonException;
+import org.sunbird.common.models.response.ClientErrorResponse;
 import org.sunbird.common.models.response.Response;
 import org.sunbird.common.models.util.ActorOperations;
 import org.sunbird.common.models.util.JsonKey;
@@ -38,8 +38,14 @@ import org.sunbird.ratelimit.service.RateLimitService;
 import org.sunbird.ratelimit.service.RateLimitServiceImpl;
 
 @RunWith(PowerMockRunner.class)
-@PrepareForTest({ServiceFactory.class, CassandraOperationImpl.class,
-        RateLimitService.class, RateLimitDaoImpl.class, RateLimitDao.class, RateLimitServiceImpl.class})
+@PrepareForTest({
+  ServiceFactory.class,
+  CassandraOperationImpl.class,
+  RateLimitService.class,
+  RateLimitDaoImpl.class,
+  RateLimitDao.class,
+  RateLimitServiceImpl.class
+})
 @PowerMockIgnore("javax.management.*")
 public class OTPActorTest {
 
@@ -66,7 +72,7 @@ public class OTPActorTest {
 
   @Before
   public void beforeEachTestCase() {
-  PowerMockito.mockStatic(ServiceFactory.class);
+    PowerMockito.mockStatic(ServiceFactory.class);
     when(ServiceFactory.getInstance()).thenReturn(mockCassandraOperation);
     probe = new TestKit(system);
     subject = system.actorOf(props);
@@ -89,7 +95,7 @@ public class OTPActorTest {
   @Test
   public void testVerifyOtpFailureWithExpiredOtp() {
     Response mockedCassandraResponse = getMockCassandraRecordByIdFailureResponse();
-    verifyOtpFailureTest(false, mockedCassandraResponse);
+    verifyOtpFailureWithExpiredOtp(false, mockedCassandraResponse);
   }
 
   @Test
@@ -124,12 +130,39 @@ public class OTPActorTest {
     } else {
       request = createRequestForVerifyOtp(EMAIL_KEY, EMAIL_TYPE);
     }
-    when(mockCassandraOperation.getRecordById(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
+    when(mockCassandraOperation.getRecordWithTTLById(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyList()))
         .thenReturn(mockedCassandraResponse);
     subject.tell(request, probe.getRef());
     Response response = probe.expectMsgClass(duration("10 second"), Response.class);
     Assert.assertTrue(response.getResponseCode().equals(ResponseCode.OK));
+  }
+
+  private void verifyOtpFailureWithExpiredOtp(boolean isPhone, Response mockedCassandraResponse) {
+    Request request;
+    if (isPhone) {
+      request = createRequestForVerifyOtp(PHONE_KEY, PHONE_TYPE);
+    } else {
+      request = createRequestForVerifyOtp(EMAIL_KEY, EMAIL_TYPE);
+    }
+    when(mockCassandraOperation.getRecordWithTTLById(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyList()))
+        .thenReturn(mockedCassandraResponse);
+    subject.tell(request, probe.getRef());
+    ProjectCommonException exception =
+        probe.expectMsgClass(duration("100 second"), ProjectCommonException.class);
+    Assert.assertTrue(
+        ((ProjectCommonException) exception)
+            .getCode()
+            .equals(ResponseCode.errorInvalidOTP.getErrorCode()));
   }
 
   private void verifyOtpFailureTest(boolean isPhone, Response mockedCassandraResponse) {
@@ -139,32 +172,43 @@ public class OTPActorTest {
     } else {
       request = createRequestForVerifyOtp(EMAIL_KEY, EMAIL_TYPE);
     }
-    when(mockCassandraOperation.getRecordById(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
+    when(mockCassandraOperation.getRecordWithTTLById(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyList()))
         .thenReturn(mockedCassandraResponse);
     subject.tell(request, probe.getRef());
-    ProjectCommonException exception =
-        probe.expectMsgClass(duration("10 second"), ProjectCommonException.class);
+    ClientErrorResponse errorResponse =
+        probe.expectMsgClass(duration("100 second"), ClientErrorResponse.class);
     Assert.assertTrue(
-        ((ProjectCommonException) exception)
-            .getCode()
-            .equals(ResponseCode.errorInvalidOTP.getErrorCode()));
+        (errorResponse.getResponseCode().name()).equals(ResponseCode.CLIENT_ERROR.name()));
   }
 
   @Test
   public void generateOtpForPhoneSuccess() {
     Request request;
     request = createGenerateOtpRequest(PHONE_TYPE, PHONE_KEY);
-    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(Mockito.anyString(), Mockito.anyString()
-            ,Mockito.anyMap(), Mockito.anyList(), Mockito.anyMap())).thenReturn(getRateLimitRecords(5));
+    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyMap()))
+        .thenReturn(getRateLimitRecords(5));
 
-    Response mockedCassandraResponse =
-            getCassandraRecordByIdForUserResponse();
-    when(mockCassandraOperation.getRecordById(
+    Response mockedCassandraResponse = getCassandraRecordByIdForUserResponse();
+    when(mockCassandraOperation.getRecordWithTTLById(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyList()))
+        .thenReturn(mockedCassandraResponse);
+    when(mockCassandraOperation.insertRecord(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(mockedCassandraResponse);
-    when(mockCassandraOperation.insertRecord(Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(createCassandraInsertSuccessResponse());
+        .thenReturn(createCassandraInsertSuccessResponse());
     subject.tell(request, probe.getRef());
     Response response = probe.expectMsgClass(duration("10 second"), Response.class);
     Assert.assertTrue(response.getResponseCode().equals(ResponseCode.OK));
@@ -174,15 +218,24 @@ public class OTPActorTest {
   public void generateOtpForEmailSuccess() {
     Request request;
     request = createGenerateOtpRequest(EMAIL_TYPE, EMAIL_KEY);
-    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(Mockito.anyString(), Mockito.anyString()
-            ,Mockito.anyMap(), Mockito.anyList(), Mockito.anyMap())).thenReturn(getRateLimitRecords(5));
-    Response mockedCassandraResponse =
-            getCassandraRecordByIdForUserResponse();
-    when(mockCassandraOperation.getRecordById(
+    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyMap()))
+        .thenReturn(getRateLimitRecords(5));
+    Response mockedCassandraResponse = getCassandraRecordByIdForUserResponse();
+    when(mockCassandraOperation.getRecordWithTTLById(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyList()))
+        .thenReturn(mockedCassandraResponse);
+    when(mockCassandraOperation.insertRecord(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(mockedCassandraResponse);
-    when(mockCassandraOperation.insertRecord(Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(createCassandraInsertSuccessResponse());
+        .thenReturn(createCassandraInsertSuccessResponse());
     subject.tell(request, probe.getRef());
     Response response = probe.expectMsgClass(duration("10 second"), Response.class);
     Assert.assertTrue(response.getResponseCode().equals(ResponseCode.OK));
@@ -192,18 +245,27 @@ public class OTPActorTest {
   public void generateOtpForEmailSuccessForUser() {
     Request request;
     request = createOtpRequest(EMAIL_TYPE, EMAIL_KEY, USER_ID);
-    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(Mockito.anyString(), Mockito.anyString()
-            ,Mockito.anyMap(), Mockito.anyList(), Mockito.anyMap())).thenReturn(getRateLimitRecords(5));
-    Response mockedCassandraResponse =
-            getCassandraRecordByIdForUserResponse();
-    when(mockCassandraOperation.getRecordById(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(mockedCassandraResponse);
+    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyMap()))
+        .thenReturn(getRateLimitRecords(5));
+    Response mockedCassandraResponse = getCassandraRecordByIdForUserResponse();
+    when(mockCassandraOperation.getRecordWithTTLById(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyList()))
+        .thenReturn(mockedCassandraResponse);
     when(mockCassandraOperation.getRecordById(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-            .thenReturn(mockedCassandraResponse);
-    when(mockCassandraOperation.insertRecord(Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(createCassandraInsertSuccessResponse());
+        .thenReturn(mockedCassandraResponse);
+    when(mockCassandraOperation.insertRecord(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
+        .thenReturn(createCassandraInsertSuccessResponse());
     subject.tell(request, probe.getRef());
     Response response = probe.expectMsgClass(duration("10 second"), Response.class);
     Assert.assertTrue(response.getResponseCode().equals(ResponseCode.OK));
@@ -213,15 +275,24 @@ public class OTPActorTest {
   public void generateOtpForInvalidType() {
     Request request;
     request = createGenerateOtpRequest("InvalidType", "InvalidType");
-    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(Mockito.anyString(), Mockito.anyString()
-            ,Mockito.anyMap(), Mockito.anyList(), Mockito.anyMap())).thenReturn(getRateLimitRecords(5));
-    Response mockedCassandraResponse =
-            getCassandraRecordByIdForUserResponse();
-    when(mockCassandraOperation.getRecordById(
+    when(mockCassandraOperation.getRecordsByIdsWithSpecifiedColumnsAndTTL(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyMap()))
+        .thenReturn(getRateLimitRecords(5));
+    Response mockedCassandraResponse = getCassandraRecordByIdForUserResponse();
+    when(mockCassandraOperation.getRecordWithTTLById(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyMap(),
+            Mockito.anyList(),
+            Mockito.anyList()))
+        .thenReturn(mockedCassandraResponse);
+    when(mockCassandraOperation.insertRecord(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(mockedCassandraResponse);
-    when(mockCassandraOperation.insertRecord(Mockito.anyString(), Mockito.anyString(), Mockito.anyMap()))
-            .thenReturn(createCassandraInsertSuccessResponse());
+        .thenReturn(createCassandraInsertSuccessResponse());
     subject.tell(request, probe.getRef());
     Response response = probe.expectMsgClass(duration("10 second"), Response.class);
     Assert.assertTrue(response.getResponseCode().equals(ResponseCode.OK));
@@ -270,7 +341,7 @@ public class OTPActorTest {
     return request;
   }
 
-  private Request createOtpRequest(String type, String key, String userId)  {
+  private Request createOtpRequest(String type, String key, String userId) {
     Request request = new Request();
     request.setOperation(ActorOperations.GENERATE_OTP.getValue());
     Map<String, Object> innerMap = new HashMap<>();
@@ -288,6 +359,8 @@ public class OTPActorTest {
     otpResponse.put(JsonKey.OTP, otp);
     otpResponse.put(JsonKey.TYPE, type);
     otpResponse.put(JsonKey.KEY, key);
+    otpResponse.put(JsonKey.ATTEMPTED_COUNT, 0);
+    otpResponse.put("otp_ttl", 120);
     list.add(otpResponse);
     response.put(JsonKey.RESPONSE, list);
     return response;
