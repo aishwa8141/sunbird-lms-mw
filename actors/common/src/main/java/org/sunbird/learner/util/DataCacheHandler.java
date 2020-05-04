@@ -12,6 +12,7 @@ import org.sunbird.common.models.util.JsonKey;
 import org.sunbird.common.models.util.LoggerEnum;
 import org.sunbird.common.models.util.ProjectLogger;
 import org.sunbird.helper.ServiceFactory;
+import org.sunbird.learner.actors.role.service.RoleService;
 
 /**
  * This class will handle the data cache.
@@ -29,6 +30,7 @@ public class DataCacheHandler implements Runnable {
   private static Map<String, List<String>> hashtagIdFrameworkIdMap = new HashMap<>();
   private CassandraOperation cassandraOperation = ServiceFactory.getInstance();
   private static final String KEY_SPACE_NAME = Util.KEY_SPACE_NAME;
+  private static Response roleCacheResponse;
 
   @Override
   public void run() {
@@ -36,13 +38,27 @@ public class DataCacheHandler implements Runnable {
     roleCache(roleMap);
     orgTypeCache(orgTypeMap);
     cacheSystemConfig(configSettings);
+    cacheRoleForRead();
     ProjectLogger.log("DataCacheHandler:run: Cache refresh completed.", LoggerEnum.INFO.name());
+  }
+
+  private void cacheRoleForRead() {
+    roleCacheResponse = RoleService.getUserRoles();
+  }
+
+  public static Response getRoleResponse() {
+    return roleCacheResponse;
+  }
+
+  public static void setRoleResponse(Response response) {
+    if (response != null) roleCacheResponse = response;
   }
 
   @SuppressWarnings("unchecked")
   private void cacheSystemConfig(Map<String, String> configSettings) {
     Response response =
         cassandraOperation.getAllRecords(KEY_SPACE_NAME, JsonKey.SYSTEM_SETTINGS_DB);
+      ProjectLogger.log("DataCacheHandler:cacheSystemConfig: Cache system setting fields"+ response.getResult(), LoggerEnum.INFO.name());
     List<Map<String, Object>> responseList =
         (List<Map<String, Object>>) response.get(JsonKey.RESPONSE);
     if (null != responseList && !responseList.isEmpty()) {
